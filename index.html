@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chunking Lab: how RAG decides what to read</title>
+<style>
+:root{--bg:#f5f7f4;--card:#fff;--ink:#17231f;--mute:#5b6b65;--line:#d5ddd8;--acc:#0b6e5c;--acc2:#e8f3ef;--bad:#b3261e;--ok:#1b7a3a;--c1:#dbeee8;--c2:#fdecc8;--c3:#e3e0f7;--c4:#fbdcd6;--ovl:#0b6e5c}
+@media(prefers-color-scheme:dark){:root{--bg:#101815;--card:#18231f;--ink:#e6efeb;--mute:#9bb0a8;--line:#2c3d37;--acc:#5fd3b8;--acc2:#1d2f29;--bad:#ff8a80;--ok:#7be0a0;--c1:#1f3a33;--c2:#41361a;--c3:#2d2a4d;--c4:#47282a;--ovl:#5fd3b8}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' fill='none' stroke='%230b6e5c' stroke-opacity='.16' stroke-width='1.5'%3E%3Cpath d='M20 40q20-10 30 0q10-10 30 0v34q-20-10-30 0q-10-10-30 0z M50 40v34'/%3E%3Cpath d='M100 100h30M100 108h24M100 116h30M96 94h42v30h-42z'/%3E%3Cpath d='M20 120l12-14 12 14v12h-24z M120 28l20 6-4 20-20-6z'/%3E%3C/svg%3E");color:var(--ink);font:16px/1.6 Georgia,"Times New Roman",serif}
+h1,h2,h3,nav,button,select,label,.mono{font-family:"Trebuchet MS",Verdana,sans-serif}
+main{max-width:860px;margin:0 auto;padding:24px 16px 80px}
+header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding-top:8px}
+.hero{width:230px;flex:none}
+@media(max-width:640px){.hero{display:none}}
+header h1{font-size:2rem;line-height:1.2;margin:8px 0}
+header p{color:var(--mute);margin:0}
+nav{position:sticky;top:0;background:var(--bg);padding:8px 0;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--line);z-index:5;font-size:.85rem}
+nav a{color:var(--ink);text-decoration:none;padding:4px 10px;border:1px solid var(--line);border-radius:6px}
+nav a:hover,nav a:focus-visible{background:var(--acc2);outline:2px solid var(--acc)}
+section{margin-top:36px}
+h2{font-size:1.4rem;margin:0 0 4px}
+.time{color:var(--mute);font-size:.85rem;font-family:"Trebuchet MS",sans-serif}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-top:12px}
+.row{display:flex;gap:14px;flex-wrap:wrap;align-items:end;margin-bottom:12px}
+label{font-size:.85rem;display:flex;flex-direction:column;gap:2px}
+select,textarea,input[type=range]{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px}
+textarea{width:100%;min-height:120px;font-size:.9rem}
+button{font-size:.9rem;padding:7px 12px;border-radius:6px;border:1px solid var(--acc);background:var(--acc2);color:var(--ink);cursor:pointer}
+button:hover,button:focus-visible{background:var(--acc);color:var(--bg)}
+.chunks{display:flex;flex-direction:column;gap:8px}
+.chunk{padding:8px 10px;border-radius:6px;font-size:.88rem;white-space:pre-wrap;word-break:break-word}
+.chunk:nth-child(4n+1){background:var(--c1)}.chunk:nth-child(4n+2){background:var(--c2)}.chunk:nth-child(4n+3){background:var(--c3)}.chunk:nth-child(4n+4){background:var(--c4)}
+.chunk small{display:block;color:var(--mute);font-family:"Trebuchet MS",sans-serif;font-size:.72rem;margin-bottom:2px}
+.ovl{text-decoration:underline;text-decoration-color:var(--ovl);text-decoration-thickness:2px}
+.cut{color:var(--bad);font-weight:bold}
+.stats{display:flex;gap:18px;flex-wrap:wrap;font-family:"Trebuchet MS",sans-serif;font-size:.9rem;margin:8px 0}
+.stats b{font-size:1.2rem}
+.q{border-top:1px solid var(--line);padding:10px 0}
+.v-ok{color:var(--ok);font-weight:bold}.v-bad{color:var(--bad);font-weight:bold}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:12px;overflow-x:auto;font-size:.82rem;line-height:1.45}
+details{margin-top:4px;font-size:.85rem;color:var(--mute)}
+.opt{display:block;width:100%;text-align:left;margin:4px 0}
+.fb{font-size:.88rem;margin:4px 0 8px;color:var(--mute)}
+ul{padding-left:20px}
+@media(prefers-color-scheme:dark){body{background-color:#0c1311;background-image:radial-gradient(1000px 520px at 50% -80px,rgba(95,211,184,.22),transparent 70%),radial-gradient(700px 500px at 100% 100%,rgba(130,110,230,.14),transparent 70%),url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' fill='none' stroke='%237fe6cc' stroke-opacity='.30' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 44q24-12 36 0q12-12 36 0v42q-24-12-36 0q-12-12-36 0z M58 44v42'/%3E%3Cpath d='M122 110h38M122 120h30M122 130h38M116 102h50v38h-50z'/%3E%3Cpath d='M30 150l18-9 18 9-18 9z M38 154v10q10 6 20 0v-10'/%3E%3Cpath d='M130 30l26 8-6 24-26-8z M138 40l14 4'/%3E%3Cpath d='M172 160l18-18 6 6-18 18-8 2z'/%3E%3C/svg%3E")}
+.panel{box-shadow:0 6px 24px rgba(0,0,0,.35)}
+.hero{filter:drop-shadow(0 0 14px rgba(95,211,184,.35))}}
+h3{font-size:1rem;margin:0 0 6px}
+svg text{font-family:"Trebuchet MS",Verdana,sans-serif}
+.g{cursor:pointer}.g:focus-visible rect{outline:2px solid var(--acc)}
+.map{display:flex;height:30px;border:1px solid var(--line);border-radius:6px;overflow:hidden;margin:6px 0}
+.map i{display:flex;height:100%;border-right:2px solid var(--card)}.map i b{background:var(--ovl);display:block;height:100%}.map i.cut{box-shadow:inset 0 -5px 0 var(--bad)}
+.strip{position:relative;height:50px;margin:8px 0 2px}
+.strip span{position:absolute;top:0;height:26px;background:var(--line);border-right:2px solid var(--card);opacity:.7}
+.strip span.r{background:var(--acc2);outline:2px solid var(--acc);outline-offset:-2px;opacity:1;z-index:1}
+.strip em{position:absolute;top:32px;height:9px;background:var(--ok);border-radius:3px;z-index:2}
+.strip small{position:absolute;top:36px;font-size:.7rem;color:var(--mute);font-family:sans-serif}
+.k{font-size:.78rem;color:var(--mute)}
+</style>
+</head>
+<body>
+<main>
+<header>
+<div><h1>Chunking Lab: how a RAG system decides what to read</h1>
+<p>A 45-minute, self-paced lesson. You will cut documents into pieces, watch retrieval succeed or fail because of your choices, and then apply it in code.</p></div>
+<svg class="hero" viewBox="0 0 220 120" role="img" aria-label="Books and a document cut into colored chunks">
+<rect x="8" y="106" width="204" height="4" rx="2" style="fill:var(--line)"/>
+<rect x="14" y="44" width="18" height="62" rx="2" style="fill:var(--c1);stroke:var(--acc);stroke-width:1.5"/>
+<rect x="34" y="32" width="16" height="74" rx="2" style="fill:var(--c2);stroke:var(--acc);stroke-width:1.5"/>
+<rect x="52" y="52" width="20" height="54" rx="2" style="fill:var(--c3);stroke:var(--acc);stroke-width:1.5"/>
+<rect x="18" y="54" width="10" height="3" style="fill:var(--acc)"/><rect x="38" y="44" width="8" height="3" style="fill:var(--acc)"/><rect x="57" y="62" width="10" height="3" style="fill:var(--acc)"/>
+<rect x="98" y="8" width="108" height="94" rx="5" style="fill:var(--card);stroke:var(--acc);stroke-width:2"/>
+<rect x="108" y="18" width="88" height="16" rx="2" style="fill:var(--c1)"/><rect x="108" y="38" width="88" height="16" rx="2" style="fill:var(--c2)"/><rect x="108" y="58" width="88" height="16" rx="2" style="fill:var(--c3)"/><rect x="108" y="78" width="88" height="16" rx="2" style="fill:var(--c4)"/>
+<path d="M102 36h100M102 56h100M102 76h100" style="stroke:var(--acc);stroke-width:1.5;stroke-dasharray:4 3"/>
+</svg>
+</header>
+<nav aria-label="Lesson sections">
+<a href="#why">1 Why (5 min)</a><a href="#play">2 Playground (12)</a><a href="#challenge">3 Challenge (12)</a><a href="#build">4 Build it (6)</a><a href="#quiz">5 Quiz (6)</a><a href="#apply">6 Real world (4)</a>
+</nav>
+
+<section id="why">
+<h2>1. Why we cut documents into chunks</h2><div class="time">5 minutes: read</div>
+<div class="panel">
+<p>An LLM has a limited context window, and every token you send costs money and attention. A 200-page handbook cannot go into every prompt. So a RAG (Retrieval-Augmented Generation) system works in two stages:</p>
+<ul>
+<li><b>Index time:</b> split documents into <i>chunks</i>, turn each chunk into an embedding (a vector), and store it.</li>
+<li><b>Query time:</b> embed the question, find the most similar chunks, and send only those to the LLM.</li>
+</ul>
+<p>The retriever can only return whole chunks. If the answer to a question was cut in half by your splitter, <b>no later step can fix that</b>. Chunking quality sets the ceiling for the whole pipeline.</p>
+<p><b>The trade-off you will explore:</b></p>
+<ul>
+<li><b>Too small:</b> chunks lose context, and facts get split apart.</li>
+<li><b>Too large:</b> one embedding must represent many topics, so it matches nothing well, and you pay for irrelevant text.</li>
+<li><b>Overlap:</b> repeating a little text at each boundary protects facts that sit on the edge, at the price of more chunks.</li>
+</ul>
+<p>Three strategies you will test: <b>Fixed-size</b> (cut every N characters), <b>Sentence-based</b> (never cut mid-sentence, group sentences up to N), and <b>Recursive</b> (try paragraphs first, then sentences, then words, so the document's own structure is respected).</p>
+</div>
+<div class="panel"><h3>Diagram 1: the RAG pipeline (click any stage)</h3>
+<svg id="pipe" viewBox="0 0 860 140" role="img" aria-label="RAG pipeline from documents to LLM answer" style="width:100%"></svg>
+<p id="pipe-t" class="fb" aria-live="polite"></p></div>
+<div class="panel"><h3>Diagram 2: the sliding window (drag the sliders)</h3>
+<div class="row"><label>Chunk size: <span id="w-size-v">40</span><input type="range" id="w-size" min="20" max="60" step="5" value="40"></label>
+<label>Overlap: <span id="w-ovl-v">10</span><input type="range" id="w-ovl" min="0" max="40" step="5" value="10"></label></div>
+<svg id="win" viewBox="0 0 860 150" role="img" aria-label="Sliding window chunking diagram" style="width:100%"></svg>
+<p id="win-t" class="fb" aria-live="polite"></p></div>
+</section>
+
+<section id="play">
+<h2>2. Playground</h2><div class="time">12 minutes: experiment</div>
+<div class="panel">
+<p>Try this: set <b>Fixed-size</b>, size 150, overlap 0, and count the red cuts. Then switch to <b>Recursive</b>. Then paste your own text (a README, lecture notes) and repeat.</p>
+<label for="p-text">Your text</label>
+<textarea id="p-text"></textarea>
+<div class="row">
+<label>Strategy<select id="p-strat"><option value="fixed">Fixed-size</option><option value="sentence">Sentence-based</option><option value="recursive">Recursive</option></select></label>
+<label>Chunk size: <span id="p-size-v">200</span> chars<input type="range" id="p-size" min="60" max="600" step="10" value="200"></label>
+<label>Overlap: <span id="p-ovl-v">0</span> chars<input type="range" id="p-ovl" min="0" max="120" step="5" value="0"></label>
+</div>
+<div class="stats" id="p-stats"></div>
+<div class="k">Document map: each block is one chunk (width = new text). Dark green = overlap. Red underline = cut mid-sentence.</div>
+<div class="map" id="p-map" aria-hidden="true"></div>
+<div class="chunks" id="p-out"></div>
+<p class="fb">Legend: underlined text is overlap copied from the previous chunk. A red ✂ marks a chunk that ends mid-sentence.</p>
+</div>
+</section>
+
+<section id="challenge">
+<h2>3. Retrieval challenge</h2><div class="time">12 minutes: hands-on</div>
+<div class="panel">
+<p><b>Goal:</b> answer all 3 questions about the Greenfield Institute library rules (text is in the playground by default) while sending the <b>least context</b> to the LLM. A question counts as answered only if the retrieved chunk(s) contain the full answer sentence.</p>
+<p class="fb">The retriever here scores chunks by shared keywords. This is a simplified stand-in for embedding similarity so you can see results instantly. The chunking effects are the same.</p>
+<div class="row">
+<label>Strategy<select id="c-strat"><option value="fixed">Fixed-size</option><option value="sentence">Sentence-based</option><option value="recursive">Recursive</option></select></label>
+<label>Size: <span id="c-size-v">120</span><input type="range" id="c-size" min="60" max="900" step="10" value="120"></label>
+<label>Overlap: <span id="c-ovl-v">0</span><input type="range" id="c-ovl" min="0" max="120" step="5" value="0"></label>
+<label>Top-k chunks<select id="c-k"><option>1</option><option>2</option><option>3</option></select></label>
+</div>
+<div class="stats" id="c-stats"></div>
+<div id="c-out"></div>
+<p><b>Reflect:</b> Which setting got 3/3 with the smallest context? Why did top-k=3 with tiny chunks sometimes work? What does that cost you?</p>
+</div>
+</section>
+
+<section id="build">
+<h2>4. Build it</h2><div class="time">6 minutes: read and run</div>
+<div class="panel">
+<p>The core idea in plain Python, with no libraries. Copy it into a notebook and compare with the playground:</p>
+<pre>def chunk_fixed(text, size=200, overlap=20):
+    step = size - overlap            # how far the window moves
+    return [text[i:i + size] for i in range(0, len(text), step)]
+
+import re
+def chunk_sentences(text, size=200):
+    sents = re.split(r"(?&lt;=[.!?])\s+", text)
+    chunks, cur = [], ""
+    for s in sents:
+        if cur and len(cur) + len(s) + 1 &gt; size:
+            chunks.append(cur); cur = s
+        else:
+            cur = f"{cur} {s}".strip()
+    if cur: chunks.append(cur)
+    return chunks</pre>
+<p>In production, use a tested splitter (<code>pip install langchain-text-splitters</code>):</p>
+<pre>from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+splitter = RecursiveCharacterTextSplitter(
+    chunk_size=800,        # characters (or tokens, via length_function)
+    chunk_overlap=100,
+    separators=["\n\n", "\n", ". ", " ", ""],
+)
+chunks = splitter.split_text(document_text)</pre>
+<p><b>Your task:</b> run both on a document of your own, print <code>len(chunks)</code>, and count how many chunks end mid-sentence. Then write 5 questions and check which chunk each answer lives in.</p>
+</div>
+</section>
+
+<section id="quiz">
+<h2>5. Knowledge check</h2><div class="time">6 minutes</div>
+<div class="panel" id="quiz"></div>
+</section>
+
+<section id="apply">
+<h2>6. Using this in real AI applications</h2><div class="time">4 minutes: read</div>
+<div class="panel">
+<ul>
+<li><b>Start with a baseline,</b> such as recursive splitting at roughly 300 to 800 tokens with 10 to 15% overlap. Then tune it using an evaluation set of real questions, like the one you just used. Measure; do not guess.</li>
+<li><b>Match the splitter to the document.</b> Markdown and code can be split by headings or functions, tables should stay whole, and PDFs need cleaning (headers, footers, hyphenation) before chunking.</li>
+<li><b>Store metadata</b> with each chunk (source, page, section title) so answers can cite sources and you can filter at query time.</li>
+<li><b>Try advanced options when basics plateau:</b> semantic chunking (split where embedding similarity drops), parent-child retrieval (search small chunks, return the larger parent), and adding a document title to every chunk.</li>
+<li><b>Failure to watch for:</b> an answer that is "in the documents" but never retrieved. Check chunking before blaming the LLM.</li>
+</ul>
+</div>
+</section>
+</main>
+
+<script>
+const SAMPLE=`Greenfield Institute Library Rules. Students may borrow up to 4 books at a time using their ID card. The standard loan period is 14 days.
+
+Renewals and fines. A book can be renewed twice if no other student has reserved it. Overdue books are fined at Rs 5 per day for each book. Fines above Rs 200 block further borrowing until paid.
+
+Reading rooms and devices. Silent zones are on the second floor and phones must be on silent mode there. Laptops may be used in the group study area on the ground floor.
+
+Lost items and opening hours. A lost book must be replaced or paid for at its current price within 30 days. The library is open from 8 AM to 8 PM on weekdays and from 9 AM to 1 PM on Saturdays.`;
+const QS=[
+{q:"How much is a student fined per day for an overdue book?",fact:"Overdue books are fined at Rs 5 per day for each book"},
+{q:"Within how many days must a lost book be replaced or paid for?",fact:"A lost book must be replaced or paid for at its current price within 30 days"},
+{q:"When is the library open on Saturdays?",fact:"The library is open from 8 AM to 8 PM on weekdays and from 9 AM to 1 PM on Saturdays"}];
+const $=id=>document.getElementById(id);
+const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+function fixed(t,size,ov){const step=Math.max(1,size-ov),out=[];
+ for(let i=0;i<t.length;i+=step){out.push({text:t.slice(i,i+size),ovl:i>0?Math.min(ov,size):0});if(i+size>=t.length)break}return out}
+function addOverlap(parts,ov){return parts.map((p,i)=>{
+ if(i===0||ov===0)return{text:p,ovl:0};
+ let tail=parts[i-1].slice(-ov);const sp=tail.indexOf(' ');if(sp>0)tail=tail.slice(sp+1);
+ return{text:tail+' '+p,ovl:tail.length+1}})}
+function sentence(t,size){const ss=t.split(/(?<=[.!?])\s+/),out=[];let cur='';
+ for(const s of ss){if(cur&&cur.length+s.length+1>size){out.push(cur);cur=s}else cur=cur?cur+' '+s:s}
+ if(cur)out.push(cur);return out}
+function rec(t,seps,size){if(t.length<=size)return[t];const s=seps[0];
+ if(s===undefined)return fixed(t,size,0).map(x=>x.text);
+ const out=[];let cur='';
+ for(const p of t.split(s)){
+  if(p.length>size){if(cur){out.push(cur);cur=''}out.push(...rec(p,seps.slice(1),size));continue}
+  const cand=cur?cur+s+p:p;
+  if(cand.length>size){out.push(cur);cur=p}else cur=cand}
+ if(cur)out.push(cur);return out.map(x=>x.trim()).filter(Boolean)}
+function chunk(t,strat,size,ov){
+ if(strat==='fixed')return fixed(t,size,ov);
+ const parts=strat==='sentence'?sentence(t,size):rec(t,["\n\n","\n",". "," "],size);
+ return addOverlap(parts,ov)}
+const endsClean=c=>/[.!?]["')]?\s*$/.test(c.text);
+
+function renderPlay(){
+ const size=+$('p-size').value,ov=Math.min(+$('p-ovl').value,size-10);
+ $('p-size-v').textContent=size;$('p-ovl-v').textContent=ov;
+ const cs=chunk($('p-text').value,$('p-strat').value,size,ov);
+ const cuts=cs.filter(c=>!endsClean(c)).length;
+ const avg=cs.length?Math.round(cs.reduce((a,c)=>a+c.text.length,0)/cs.length):0;
+ $('p-stats').innerHTML=`<span><b>${cs.length}</b> chunks</span><span><b>${avg}</b> avg chars</span><span><b>${cuts}</b> end mid-sentence</span>`;
+ const tot=cs.reduce((a,c)=>a+c.text.length,0)||1;
+ $('p-map').innerHTML=cs.map((c,i)=>`<i class="${endsClean(c)?'':'cut'}" title="chunk ${i+1}" style="width:${c.text.length/tot*100}%;background:var(--c${i%4+1})"><b style="width:${c.ovl/c.text.length*100}%"></b></i>`).join('');
+ $('p-out').innerHTML=cs.map((c,i)=>{
+  const o=esc(c.text.slice(0,c.ovl)),r=esc(c.text.slice(c.ovl));
+  return`<div class="chunk"><small>chunk ${i+1} · ${c.text.length} chars</small><span class="ovl">${o}</span>${r}${endsClean(c)?'':' <span class="cut">✂</span>'}</div>`}).join('');
+}
+const STOP=new Set("a an the of on in to is are be can how many much do does for if i my or and with at by it".split(' '));
+const toks=s=>new Set((s.toLowerCase().match(/[a-z0-9$]+/g)||[]).map(w=>w.replace(/s$/,'')).filter(w=>!STOP.has(w)));
+const norm=s=>s.replace(/\s+/g,' ');
+function strip(cs,sel,fact){
+ const tot=cs.reduce((a,c)=>a+c.text.length-c.ovl,0)||1;let x=0,h='';
+ cs.forEach((c,i)=>{const w=(c.text.length-c.ovl)/tot*100;h+=`<span class="${sel.includes(i)?'r':''}" style="left:${x}%;width:${w}%"></span>`;x+=w});
+ const p=SAMPLE.indexOf(fact)/SAMPLE.length*100,w=fact.length/SAMPLE.length*100;
+ return`<div class="strip" aria-hidden="true">${h}<em style="left:${p}%;width:${w}%"></em></div>`}
+function renderChallenge(){
+ const size=+$('c-size').value,ov=Math.min(+$('c-ovl').value,size-10),k=+$('c-k').value;
+ $('c-size-v').textContent=size;$('c-ovl-v').textContent=ov;
+ const cs=chunk(SAMPLE,$('c-strat').value,size,ov);
+ let ok=0,sent=0,html='';
+ for(const Q of QS){
+  const qt=toks(Q.q);
+  const ranked=cs.map((c,i)=>{const ct=toks(c.text);let s=0;qt.forEach(w=>{if(ct.has(w))s++});return{c,i,s}}).sort((a,b)=>b.s-a.s||a.i-b.i).slice(0,k);
+  const hit=ranked.some(r=>norm(r.c.text).includes(Q.fact));
+  const split=!hit&&!cs.some(c=>norm(c.text).includes(Q.fact));
+  const ctx=ranked.reduce((a,r)=>a+r.c.text.length,0);sent+=ctx;if(hit)ok++;
+  const why=hit?'✔ Answer found in retrieved context':split?'✘ The answer sentence is split across chunks, so no chunk holds it':'✘ Answer exists in a chunk, but it was not ranked in the top '+k;
+  html+=`<div class="q"><b>${esc(Q.q)}</b><br><span class="${hit?'v-ok':'v-bad'}">${why}</span> <span class="fb">(${ctx} chars sent)</span>${strip(cs,ranked.map(r=>r.i),Q.fact)}<div class="k">Blocks = chunks (outlined = retrieved). Green bar = where the answer sentence sits in the document.</div><details><summary>Show retrieved chunks</summary>${ranked.map(r=>'<p>#'+(r.i+1)+' (score '+r.s+'): '+esc(r.c.text)+'</p>').join('')}</details></div>`}
+ $('c-stats').innerHTML=`<span><b>${ok}/3</b> answered</span><span><b>${cs.length}</b> chunks</span><span><b>${Math.round(sent/3)}</b> avg chars sent per question</span>`+(ok===3?'<span class="v-ok">All answered. Can you do it with less context?</span>':'');
+ $('c-out').innerHTML=html;
+}
+['p-strat','p-size','p-ovl','p-text'].forEach(id=>$(id).addEventListener('input',renderPlay));
+['c-strat','c-size','c-ovl','c-k'].forEach(id=>$(id).addEventListener('input',renderChallenge));
+const ST=[['Documents','Index time','PDFs, web pages, notes. Clean the text first: remove headers, footers and broken line breaks.'],['Chunking','Index time','THIS LESSON. Split text into pieces small enough to match a question precisely, yet big enough to make sense alone.'],['Embed','Index time','Each chunk becomes a vector (a list of numbers) that captures its meaning.'],['Vector DB','Index time','Stores each vector with its original chunk text and metadata, ready for fast similarity search.'],['Retrieve','Query time','The question is embedded the same way. The top-k most similar chunks are returned.'],['LLM answers','Query time','The retrieved chunks are pasted into the prompt. The LLM sees only these chunks, nothing else.']];
+function drawPipe(sel){let s='';
+ s+='<text x="10" y="16" style="fill:var(--mute);font-size:12px">Index time (done once)</text><text x="724" y="16" style="fill:var(--mute);font-size:12px">Query time</text>';
+ ST.forEach((t,i)=>{const x=10+i*143,on=i===sel;
+  if(i)s+=`<path d="M${x-16} 70h14m-5-4l5 4-5 4" style="stroke:var(--mute);fill:none;stroke-width:2"/>`;
+  s+=`<g class="g" tabindex="0" role="button" data-i="${i}"><rect x="${x}" y="35" width="125" height="70" rx="8" style="fill:${on?'var(--acc2)':'var(--card)'};stroke:${on?'var(--acc)':'var(--line)'};stroke-width:${on?3:1.5}"/><text x="${x+62}" y="75" text-anchor="middle" style="fill:var(--ink);font-size:15px;font-weight:${on?700:400}">${t[0]}</text></g>`});
+ $('pipe').innerHTML=s;$('pipe-t').innerHTML=`<b>${ST[sel][0]}</b> (${ST[sel][1]}): ${ST[sel][2]}`}
+$('pipe').addEventListener('click',e=>{const g=e.target.closest('.g');if(g)drawPipe(+g.dataset.i)});
+$('pipe').addEventListener('keydown',e=>{const g=e.target.closest('.g');if(g&&(e.key==='Enter'||e.key===' ')){e.preventDefault();drawPipe(+g.dataset.i);$('pipe').querySelector(`[data-i="${g.dataset.i}"]`).focus()}});
+drawPipe(1);
+function drawWin(){const s=+$('w-size').value,o=Math.min(+$('w-ovl').value,s-5),N=100,k=8,st=s-o,starts=[];
+ $('w-size-v').textContent=s;$('w-ovl-v').textContent=o;
+ for(let i=0;i<N;i+=st){starts.push(i);if(i+s>=N)break}
+ let g=`<rect x="30" y="8" width="${N*k}" height="20" rx="4" style="fill:var(--line)"/><text x="${30+N*k/2}" y="23" text-anchor="middle" style="fill:var(--ink);font-size:12px">document: 100 characters</text>`;
+ starts.forEach((a,j)=>{const w=Math.min(s,N-a)*k,y=40+j*22;
+  g+=`<rect x="${30+a*k}" y="${y}" width="${w}" height="16" rx="3" style="fill:var(--c${j%4+1});stroke:var(--mute)"/>`;
+  if(j&&o)g+=`<rect x="${30+a*k}" y="${y}" width="${Math.min(o,N-a)*k}" height="16" rx="3" style="fill:var(--ovl);opacity:.6"/>`;
+  g+=`<text x="${34+a*k}" y="${y+12}" style="fill:var(--ink);font-size:11px">chunk ${j+1}</text>`});
+ $('win').setAttribute('viewBox',`0 0 860 ${50+starts.length*22}`);$('win').innerHTML=g;
+ $('win-t').textContent=`${starts.length} chunks. Each new chunk adds ${st} new characters and repeats ${o} (${Math.round(o/s*100)}% of the chunk, shown dark). More overlap protects boundary facts but means more chunks to embed and store.`}
+['w-size','w-ovl'].forEach(id=>$(id).addEventListener('input',drawWin));drawWin();
+$('p-text').value=SAMPLE;renderPlay();renderChallenge();
+
+const QUIZ=[
+{q:"Why add overlap between chunks?",o:["It makes embeddings faster to compute","It keeps facts that sit on a boundary retrievable from at least one chunk","It reduces the total number of chunks","It removes duplicate sentences"],a:1,e:"Overlap duplicates a little text at each boundary. It increases chunk count and storage, but protects boundary facts."},
+{q:"What is the main risk of very large chunks?",o:["The vector database refuses to store them","Each embedding blends many topics, so retrieval gets less precise and you send more irrelevant tokens","The LLM cannot read long text at all","Overlap stops working"],a:1,e:"Large chunks dilute the embedding and waste context window and cost."},
+{q:"Which strategy tries paragraph breaks before sentence breaks before word breaks?",o:["Fixed-size","Random","Recursive","Character-count only"],a:2,e:"Recursive splitting respects the document's structure and only falls back to finer separators when a piece is still too big."},
+{q:"A key fact is split across two chunks and top-k is 1. What most likely happens?",o:["The LLM reconstructs the missing half perfectly","The LLM sees only part of the fact and may give a wrong or invented answer","The vector database merges the chunks","Nothing; retrieval is unaffected"],a:1,e:"The generator only sees retrieved text. Missing context leads to incomplete or hallucinated answers, so fix it at chunking time."}];
+let score=0,done=0;
+$('quiz').innerHTML=QUIZ.map((x,qi)=>`<div class="q"><b>${qi+1}. ${x.q}</b>${x.o.map((o,oi)=>`<button class="opt" data-q="${qi}" data-o="${oi}">${o}</button>`).join('')}<div class="fb" id="fb${qi}"></div></div>`).join('')+'<p id="score" class="mono"></p>';
+$('quiz').addEventListener('click',e=>{const b=e.target.closest('.opt');if(!b)return;
+ const qi=+b.dataset.q,oi=+b.dataset.o,x=QUIZ[qi],fb=$('fb'+qi);if(fb.dataset.done)return;
+ fb.dataset.done=1;done++;const right=oi===x.a;if(right)score++;
+ fb.innerHTML=`<span class="${right?'v-ok':'v-bad'}">${right?'Correct.':'Not quite.'}</span> ${x.e}`;
+ if(done===QUIZ.length)$('score').textContent=`Score: ${score}/${QUIZ.length}`+(score<3?'. Revisit the playground and try again.':'. Nice work.')});
+</script>
+</body>
+</html>
